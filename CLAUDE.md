@@ -49,8 +49,9 @@ npm run lint       # eslint
 ## Environment
 
 - `AI_GATEWAY_API_KEY` — enables the AI engine (optional; rule-based needs nothing).
-- `HUMANIZER_MODEL` — AI Gateway `creator/model` string, default `anthropic/claude-sonnet-4.5`.
-- On Vercel, OIDC can replace the key.
+- `HUMANIZER_MODEL` — AI Gateway `creator/model` string, default `anthropic/claude-sonnet-5.5`. Validate IDs against `curl -fsSL https://ai-gateway.vercel.sh/v1/models`.
+- On Vercel (or a linked local project via `vercel link` + `vercel env pull`), the `VERCEL_OIDC_TOKEN` replaces the key. OIDC tokens expire ~12h locally — re-pull when the AI engine starts failing auth.
+- AI Gateway requires a payment method on the Vercel account to unlock free credits; without it the gateway returns `403 customer_verification_required` and the humanize route surfaces a friendly message.
 
 ## Ideas / backlog
 
@@ -65,3 +66,5 @@ npm run lint       # eslint
 ## Change Log
 
 - **2026-11-09** — Initial build. Scaffolded Next.js 16 + React 19 + TS + Tailwind v4. Added pure-TS AI-pattern detector (`lib/detector.ts`), data-safe rule-based humanizer (`lib/humanize-rules.ts`), AI engine via AI SDK 7 + AI Gateway with lab-report prompt (`lib/prompt.ts`, `app/api/humanize`), `/api/detect`, and the full workspace UI (live scoring, highlight view, streamed AI rewrite, before/after re-score). Dark-first design system with Fira fonts. Added README and this file.
+- **2026-11-09** — Strengthened the rule-based engine with more science-safe swaps (pivotal→key, robust→reliable, showcase→show, de-inflated "underscores the importance of") — sample now drops 40%→25%.
+- **2026-11-09** — Enabled the AI engine: linked a Vercel project and OIDC (`vercel link`), default model bumped to `anthropic/claude-sonnet-5.5` (verified in the live gateway catalog). Fixed a streaming-error bug: gateway errors after the 200 headers used to yield an empty body; the route now probes the first token via `onError` capture and returns a clean, friendly `502` (e.g. the "add a payment method" message) instead of silence.

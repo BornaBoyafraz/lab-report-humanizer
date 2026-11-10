@@ -62,20 +62,88 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // The AI SDK's default handler logs stream errors and closes the stream
+  // gracefully, so iterating textStream does NOT throw — the client would get
+  // an empty 200. We capture the error via onError and check it before (and
+  // during) streaming so the client always gets an actionable message.
+  let captured: unknown = null;
+  const result = streamText({
+    model: DEFAULT_MODEL,
+    system: buildSystemPrompt(strength),
+    prompt: buildUserPrompt(text, sample),
+    temperature: 0.8,
+    onError: ({ error }) => {
+      captured = error;
+    },
+  });
+
+  const iterator = result.textStream[Symbol.asyncIterator]();
+  let first: IteratorResult<string>;
   try {
-    const result = streamText({
-      model: DEFAULT_MODEL,
-      system: buildSystemPrompt(strength),
-      prompt: buildUserPrompt(text, sample),
-      temperature: 0.8,
-    });
-    // Plain text token stream; the client reads it incrementally.
-    return result.toTextStreamResponse();
+    first = await iterator.next();
   } catch (err) {
-    const message = err instanceof Error ? err.message : "unknown error";
     return Response.json(
-      { error: `AI engine error: ${message}`, code: "AI_ERROR" },
+      { error: friendlyAiError(err), code: "AI_ERROR" },
       { status: 502 }
     );
   }
+
+  // Immediate failure (bad auth, no card/credits, model access): nothing has
+  // been sent yet, so return a clean JSON error the UI can render.
+  if (captured && (first.done || !first.value)) {
+    return Response.json(
+      { error: friendlyAiError(captured), code: "AI_ERROR" },
+      { status: 502 }
+    );
+  }
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        if (!first.done && first.value) {
+          controller.enqueue(encoder.encode(first.value));
+        }
+        for (;;) {
+          const { done, value } = await iterator.next();
+          if (done) break;
+          if (value) controller.enqueue(encoder.encode(value));
+        }
+        // Error after some tokens already streamed.
+        if (captured) {
+          controller.enqueue(
+            encoder.encode(`\n\n[stream interrupted: ${friendlyAiError(captured)}]`)
+          );
+        }
+        controller.close();
+      } catch (err) {
+        controller.enqueue(
+          encoder.encode(`\n\n[stream interrupted: ${friendlyAiError(err)}]`)
+        );
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+/** Turn raw gateway/model errors into something a user can act on. */
+function friendlyAiError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/credit card|customer_verification|valid payment/i.test(message)) {
+    return "AI Gateway needs a payment method on file to unlock your free credits. Add a card in your Vercel dashboard (AI tab), then try again. Meanwhile, the Rule-based engine works with no account at all.";
+  }
+  if (/insufficient|budget|quota|exceeded/i.test(message)) {
+    return "AI Gateway credits/budget are exhausted for this account. Top up or raise the budget in Vercel, or use the Rule-based engine.";
+  }
+  if (/unauthor|forbidden|invalid.*(key|token)|oidc/i.test(message)) {
+    return "AI Gateway rejected the credentials. Re-run `vercel env pull` to refresh the OIDC token (it expires ~12h), or set AI_GATEWAY_API_KEY. The Rule-based engine needs no credentials.";
+  }
+  return `AI engine error: ${message}`;
 }

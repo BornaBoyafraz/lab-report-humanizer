@@ -57,4 +57,5 @@ export function buildUserPrompt(text: string, sample?: string): string {
   return out;
 }
 
-export const DEFAULT_MODEL = process.env.HUMANIZER_MODEL || "anthropic/claude-sonnet-4.5";
+export const DEFAULT_MODEL =
+  process.env.HUMANIZER_MODEL || "anthropic/claude-sonnet-5.5";
